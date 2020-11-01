@@ -96,3 +96,90 @@ impl UartGenerator {
         Ok(())
     }
 }
+
+/*
+DRAFT clock-perfect uart tx (bound to 8MHz & 115200 baud rate)
+
+static uint8_t tx_bit_count;
+
+// calculation for 69T bit length (115200 baud & 8MHz clock)
+
+// Start bit: (69 - 5(lag) - 1(set pin) - 1(set loop var) - 2 (reset bit counter)) wait clocks = 60T
+// nearest N for 4-wait clock cycle: 15 (59 clocks)
+// 1 NOP's required
+
+// Bits loop: each loop 6T comp&set and 3T bit switch + 1T set wait loop value (10T)
+// wait loop: 69 - 9 = 59T
+// nearest N for 4-wait clock cycle: 15 (59 clocks)
+//  0 NOP's required
+
+// 7T compare + 1T set wait loop value + 3T bit check -> 11T
+// 69 - 11 = 58
+// N = 14 for 56T; 2 NOP required
+
+// Stop bit: 69 - 5(lag) - 1(set) - 1(set wait loop value) = 62
+// nearest N for 4-wait clock cycle: 15 (59 clocks)
+// 3 NOP's required
+
+static void uart_send_byte(uint8_t byte) {
+    __asm
+        set0 PA_ADDR, #0        ; 1CLK
+        mov a, #15              ; 1CLK; (we need to wait 4 clock less(to accomodate lag in the following block - 1 cycle in set0))
+        0001$:                  ; Start bit; wait loop takes (N * 4 - 1)
+        nop                     ; 1CLK
+        dzsn a                  ; 1CLK / 2CLK SKIP
+        goto 0001$              ; 2CLK
+        mov a, #8
+        mov _tx_bit_count, a
+        ; %START_BIT_NOP_BEGIN%
+        nop
+        ; %START_BIT_NOP_END%
+
+        0002$: ; 8 bit transmittion
+        ; LSB bit will be moved to carry
+        ; In any case the following snippet will always take 7 clocks (unitl 0004$)
+        ; bit will be set on clock 5
+        SR _uart_send_byte_PARM_1 ; 1 CLK
+        T1SN f, c                 ; 1 CLK : If bit is 0, else - 2
+        goto 0003$                ; 2 CLK
+        nop;                      ; 1 CLK
+        set1 PA_ADDR, #0          ; 1 CLK
+        goto .+3                  ; 2 CLK
+        0003$:
+        set0 PA_ADDR, #0          ; 1 CLK
+        goto .+1                  ; 2 CLK to equalify branches
+
+        mov a, #14              ; 1CLK; 17 * 4 + 1
+        0004$:
+        nop                     ; 1CLK
+        dzsn a                  ; 1CLK / 2CLK SKIP
+        goto 0004$              ; 2CLK
+        ; %BIT_NOP_BEGIN%
+        nop
+        nop
+        ; %BIT_NOP_END%
+
+        ; block below always takes 3 T
+        dzsn _tx_bit_count      ; 1CLK / 2CLK SKIP
+        goto 0002$              ; 2CLK
+        nop                     ; 1T
+
+        ; We need to wait + 5T to accomodate lag in bit setting above
+        goto .+1
+        goto .+1
+        nop
+        set1 PA_ADDR, #0
+
+        MOV a, #15              ; 1CLK; (we need to wait 4 clock less(to accomodate lag in the following block - 1 cycle in set0))
+        0005$:                  ; Start bit; wait loop takes (N * 4 - 1)
+        nop                     ; 1CLK
+        dzsn a                  ; 1CLK / 2CLK SKIP
+        goto 0005$              ; 2CLK
+        ; %STOP_BIT_NOP_BEGIN%
+        nop
+        nop
+        nop
+        ; %STOP_BIT_NOP_END%
+    __endasm;
+}
+ */
