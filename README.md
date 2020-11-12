@@ -7,4 +7,4 @@ Current capabilities table
 
 |Protocol|State|Comment|
 |--------|-----|---- |
-|UART    |🔨 WIP | Working on clock-perfect TX implementation |
+|UART    |🔨 WIP | Clock-precise TX side was implemented; RX side implementation is pending |
