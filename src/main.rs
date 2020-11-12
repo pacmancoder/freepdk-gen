@@ -1,4 +1,4 @@
-mod frequency;
+mod mcu;
 mod config;
 mod uart;
 
