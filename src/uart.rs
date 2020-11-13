@@ -7,6 +7,7 @@ use crate::{
     mcu::{Frequency, Port, Pin},
     config::{AppConfig, AppSubcommand},
 };
+use crate::mcu::StopBits;
 
 const DEFAULT_MAX_CLOCK_DERIVATION: f64 = 0.01;
 const MAX_CLOCKS_PER_BIT: u32 = 256 * 4;
@@ -41,6 +42,7 @@ pub struct UartGeneratorBuilder {
     max_clock_derivation: Option<f64>,
     invert_tx: bool,
     tx_function_name: Option<String>,
+    stop_bits: Option<StopBits>,
 }
 
 impl UartGeneratorBuilder {
@@ -57,6 +59,7 @@ impl UartGeneratorBuilder {
         self.tx_pin.replace(uart.tx_pin);
         self.invert_tx = uart.invert_tx;
         self.tx_function_name = uart.tx_function_name.clone();
+        self.stop_bits.replace(uart.stop_bits);
         Ok(self)
     }
 
@@ -101,10 +104,17 @@ impl UartGeneratorBuilder {
             return Err(Error::TooBigClockDerivation(max_clock_rate_derivation));
         }
 
+        let clocks_per_stop_bit = match self.stop_bits.unwrap_or(StopBits::One) {
+            StopBits::One => clocks_per_bit,
+            StopBits::Two => clocks_per_bit * 2,
+            StopBits::OneAndHalf => clocks_per_bit + clocks_per_bit / 2,
+        };
+
         Ok(UartGenerator {
             frequency,
             baud,
             clocks_per_bit,
+            clocks_per_stop_bit,
             tx_port,
             tx_pin,
             tx_function_name,
@@ -208,6 +218,7 @@ pub struct UartGenerator {
     frequency: Frequency,
     baud: u32,
     clocks_per_bit: u32,
+    clocks_per_stop_bit: u32,
     tx_port: Port,
     tx_pin: Pin,
     tx_function_name: String,
@@ -263,7 +274,7 @@ impl UartGenerator {
         let tx_bit_tail_wait_instructions =
             generate_space_optimal_nop_chain(tx_bit_tail_wait_cycles);
 
-        let tx_stop_bit_wait_clocks = self.clocks_per_bit
+        let tx_stop_bit_wait_clocks = self.clocks_per_stop_bit
             - TX_BIT_SET_LOOP_LAG_CLOCKS
             - TX_SET_PIN_CLOCKS
             - TX_SET_WAIT_LOOP_COUNTER_CLOCKS

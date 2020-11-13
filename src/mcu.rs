@@ -106,3 +106,24 @@ impl Pin {
         self.0
     }
 }
+
+#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Debug)]
+pub enum StopBits {
+    One,
+    Two,
+    OneAndHalf,
+}
+
+impl FromStr for StopBits {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "1" => Ok(Self::One),
+            "2" => Ok(Self::Two),
+            "1.5" => Ok(Self::OneAndHalf),
+            _ => Err("Invalid stop bits value".to_string())
+        }
+    }
+}
+

@@ -1,6 +1,6 @@
 use clap::Clap;
 
-use crate::mcu::{Frequency, Port, Pin};
+use crate::mcu::{Frequency, Port, Pin, StopBits};
 
 #[derive(Clap)]
 #[clap(
@@ -34,4 +34,6 @@ pub struct UartSubcommand {
     pub invert_tx: bool,
     #[clap(long, about = "Customize generated UART TX function name")]
     pub tx_function_name: Option<String>,
+    #[clap(long, about = "Set stop bits count; Available values: 1, 2, 1.5", default_value = "1")]
+    pub stop_bits: StopBits,
 }
