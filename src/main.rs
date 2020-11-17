@@ -1,11 +1,10 @@
-mod mcu;
-mod config;
-mod uart;
-
 use clap::Clap;
 use anyhow::Error;
 
-use crate::config::{AppConfig, AppSubcommand};
+use freepdk_gen::{
+    config::{AppConfig, AppSubcommand},
+    uart::UartGenerator
+};
 
 fn main() -> Result<(), Error> {
     env_logger::builder()
@@ -17,7 +16,7 @@ fn main() -> Result<(), Error> {
     let config: AppConfig = AppConfig::parse();
 
     if matches!(config.subcommand, AppSubcommand::Uart(_)) {
-        uart::UartGenerator::builder()
+        UartGenerator::builder()
             .load_config(&config)?
             .build()?
             .generate()?;

@@ -19,10 +19,14 @@ pub enum Error {
     InvalidOptions,
     #[error("{} clocks per bit is not implemented yet. Max allowed clocks per bit are {}, try lower frequency or higher baud rate", _0, MAX_CLOCKS_PER_BIT)]
     TooManyClocksPerBit(u32),
+    #[error("{} clocks per stop bit is not implemented yet. Max allowed clocks per bit are {}, try lower frequency or higher baud rate", _0, MAX_CLOCKS_PER_BIT)]
+    TooManyClocksPerStopBit(u32),
     #[error("Clock derivation is higher than allowed {:.2}%", _0 * 100f64)]
     TooBigClockDerivation(f64),
-    #[error("Calculated clocks per bit ({}) are too small (more than {} is required), try higher frequency or lower baud rate", _0, MIN_CLOCKS_PER_BIT)]
+    #[error("Calculated clocks count per bit ({}) is too small (more than {} is required), try higher frequency or lower baud rate", _0, MIN_CLOCKS_PER_BIT)]
     VeryFewClocksPerBit(u32),
+    #[error("Calculated clocks count per half bit ({}) is too small (more than {} is required), try higher frequency or lower baud rate", _0, MIN_CLOCKS_PER_BIT)]
+    VeryFewClocksPerHalfBit(u32),
     #[error("Template rendering failed: {}", _0)]
     TemplateFailure(String),
 }
@@ -39,9 +43,12 @@ pub struct UartGeneratorBuilder {
     baud: Option<u32>,
     tx_pin: Option<Pin>,
     tx_port: Option<Port>,
-    max_clock_derivation: Option<f64>,
     invert_tx: bool,
-    tx_function_name: Option<String>,
+    rx_port: Option<Port>,
+    rx_pin: Option<Pin>,
+    invert_rx: bool,
+    max_clock_derivation: Option<f64>,
+    uart_num: Option<u8>,
     stop_bits: Option<StopBits>,
 }
 
@@ -58,8 +65,11 @@ impl UartGeneratorBuilder {
         self.tx_port.replace(uart.tx_port);
         self.tx_pin.replace(uart.tx_pin);
         self.invert_tx = uart.invert_tx;
-        self.tx_function_name = uart.tx_function_name.clone();
+        self.uart_num.replace(uart.uart_num);
         self.stop_bits.replace(uart.stop_bits);
+        self.rx_port.replace(uart.rx_port);
+        self.rx_pin.replace(uart.rx_pin);
+        self.invert_rx = uart.invert_rx;
         Ok(self)
     }
 
@@ -74,12 +84,15 @@ impl UartGeneratorBuilder {
 
         let frequency = self.frequency.expect("Frequency should be specified");
         let baud = self.baud.expect("Baud rate should be specified");
-        let tx_port = self.tx_port.expect("Port should be specified");
-        let tx_pin = self.tx_pin.expect("Pin should be specified");
+        let tx_port = self.tx_port.expect("Tx port should be specified");
+        let tx_pin = self.tx_pin.expect("Tx pin should be specified");
         let max_clock_rate_derivation = self.max_clock_derivation
             .unwrap_or(DEFAULT_MAX_CLOCK_DERIVATION);
-        let tx_function_name = self.tx_function_name
-            .unwrap_or_else(|| String::from("uart0_send_byte"));
+        let uart_num = self.uart_num.expect("Uart number should be specified");
+        let invert_tx = self.invert_tx;
+        let rx_port = self.rx_port.expect("Rx port should be specified");
+        let rx_pin = self.rx_pin.expect("Rx pin should be specified");
+        let invert_rx = self.invert_rx;
 
         let expected_clocks_per_bit = (frequency.hz() as f64) / baud as f64;
         let clocks_per_bit = expected_clocks_per_bit.round() as u32;
@@ -106,19 +119,33 @@ impl UartGeneratorBuilder {
 
         let clocks_per_stop_bit = match self.stop_bits.unwrap_or(StopBits::One) {
             StopBits::One => clocks_per_bit,
-            StopBits::Two => clocks_per_bit * 2,
-            StopBits::OneAndHalf => clocks_per_bit + clocks_per_bit / 2,
+            StopBits::Two => (expected_clocks_per_bit * 2.0).round() as u32,
+            StopBits::OneAndHalf =>  (expected_clocks_per_bit * 1.5).round() as u32,
         };
+
+        if  clocks_per_stop_bit > MAX_CLOCKS_PER_BIT {
+            return Err(Error::TooManyClocksPerStopBit(clocks_per_stop_bit));
+        }
+
+        let clocks_per_half_bit = (expected_clocks_per_bit * 0.5).round() as u32;
+
+        if clocks_per_half_bit < MIN_CLOCKS_PER_BIT {
+            return Err(Error::VeryFewClocksPerHalfBit(clocks_per_bit));
+        }
 
         Ok(UartGenerator {
             frequency,
             baud,
             clocks_per_bit,
             clocks_per_stop_bit,
+            clocks_per_half_bit,
             tx_port,
             tx_pin,
-            tx_function_name,
-            invert_tx: self.invert_tx,
+            uart_num,
+            invert_tx,
+            rx_port,
+            rx_pin,
+            invert_rx,
         })
     }
 }
@@ -141,6 +168,16 @@ struct TemplateContext {
     tx_bit_tail_wait_instructions: Vec<&'static str>,
     tx_stop_bit_wait_cycles: u32,
     tx_stop_bit_tail_wait_instructions: Vec<&'static str>,
+
+    rx_function_name: String,
+    rx_byte_name: String,
+    rx_port: char,
+    rx_pin: u8,
+    rx_inverted: bool,
+    rx_start_bit_wait_cycles: u32,
+    rx_start_bit_tail_wait_instructions: Vec<&'static str>,
+    rx_bit_wait_cycles: u32,
+    rx_bit_tail_wait_instructions: Vec<&'static str>,
 }
 
 const UART_TEMPLATE: &str = r##"// THIS FILE WAS GENERATED BY {app_name} v{app_version}
@@ -156,6 +193,12 @@ const UART_TEMPLATE: &str = r##"// THIS FILE WAS GENERATED BY {app_name} v{app_v
 #if F_CPU != {frequency}
     #error "Defined F_CPU does not match generated uart's frequency ({frequency})"
 #endif
+
+#define UART_RESULT_RX_IDLE 0
+#define UART_RESULT_RX_RECEIVED 1
+#define UART_RESULT_RX_ERROR 2
+
+typedef uint8_t UartResult;
 
 static uint8_t _gen_{tx_function_name}_bits_left;
 
@@ -212,17 +255,83 @@ static void {tx_function_name}(uint8_t byte) \{
     {{endfor}}
     __endasm;
 }
+
+uint8_t {rx_byte_name};
+uint8_t _gen_{rx_function_name}_bit;
+
+static UartResult {rx_function_name}(void) __naked \{
+    __asm
+    ; Early check (A&F are not affected)
+    {{if rx_inverted}}t1sn{{else}}t0sn{{endif}} P{rx_port}_ADDR, #{rx_pin} ; 1T/2T on skip/start bit
+    ret #UART_RESULT_RX_IDLE
+
+    ; Function prelude
+    pushaf ; 1T
+
+    ; Wait to middle of the bit
+    mov a, #{rx_start_bit_wait_cycles} ; 1T
+    nop ; 1T
+    dzsn a ; 1T normally, 2T on skip
+    goto .-2 ; 2T
+    {{for instruction in rx_start_bit_tail_wait_instructions}}{instruction}
+    {{endfor}}
+
+    ; Validate start bit mid-value
+    {{if rx_inverted}}t1sn{{else}}t0sn{{endif}} P{rx_port}_ADDR, #{rx_pin} ; 1T/2T on skip/start bit
+    goto _gen_label_{rx_function_name}_error ; 2T
+
+    ; Set bit counter to initial value
+    mov a, #8 ; 1T, loop will end on 9th bit (after dec 0)
+    mov __gen_{rx_function_name}_bit, a ; 1T
+
+    ; Bit loop
+    _gen_label_{rx_function_name}_bit_loop:
+    src _{rx_byte_name} ; 1T; insert bit from carry (from the previous iteration)
+    ; Wait loop
+    mov a, #{rx_bit_wait_cycles} ; 1T
+    nop ; 1T
+    dzsn a; 1T normall, 2T on skip
+    goto .-2 ; 2T
+    {{for instruction in rx_bit_tail_wait_instructions}}{instruction}
+    {{endfor}}
+
+    ; check rx bit value; code beforea actual check introduces 4T lag
+    dec __gen_{rx_function_name}_bit ; 1T; decrease count of remainig bits
+    {{if rx_inverted}}set0{{else}}set1{{endif}} f, c ; 1T
+    {{if rx_inverted}}t0sn{{else}}t1sn{{endif}} P{rx_port}_ADDR, #{rx_pin} ; 1T/2T, read rx bit
+    {{if rx_inverted}}set1{{else}}set0{{endif}} f, c ; 1T
+
+    ; check bit counter; 0xFF value (7th bit is set) represents 9th iteration
+    t1sn __gen_{rx_function_name}_bit, #7 ; 1T normally, 2T loop exit
+    goto _gen_label_{rx_function_name}_bit_loop ; 2T
+    nop ; 1T
+
+    ; Validate stop bit value
+    {{if rx_inverted}}t0sn{{else}}t1sn{{endif}} f, c ; 1T/2T
+    goto _gen_label_{rx_function_name}_error ; 2T
+    popaf ; 1T
+    ret #UART_RESULT_RX_RECEIVED ; 2T
+    _gen_label_{rx_function_name}_error:
+    popaf
+    ret #UART_RESULT_RX_ERROR ; 2T; start/stop bits were invalid
+    __endasm;
+}
+
 "##;
 
 pub struct UartGenerator {
     frequency: Frequency,
     baud: u32,
     clocks_per_bit: u32,
+    clocks_per_half_bit: u32,
     clocks_per_stop_bit: u32,
     tx_port: Port,
     tx_pin: Pin,
-    tx_function_name: String,
+    uart_num: u8,
     invert_tx: bool,
+    rx_port: Port,
+    rx_pin: Pin,
+    invert_rx: bool,
 }
 
 fn generate_space_optimal_nop_chain(count: u32) -> Vec<&'static str> {
@@ -285,6 +394,50 @@ impl UartGenerator {
         let tx_stop_bit_tail_wait_instructions =
             generate_space_optimal_nop_chain(tx_stop_bit_tail_wait_cycles);
 
+        let tx_function_name = format!("uart{0}_send", self.uart_num);
+
+        const RX_CHECK_START_BIT_CLOCKS: u32 = 2;
+        const RX_FUNCTION_PRELUDE: u32 = 1;
+        const RX_SET_START_BIT_WAIT_LOOP_COUNTER_CLOCKS: u32 = 1;
+        const RX_VALIDATE_START_BIT_CLOCKS: u32 = 2;
+        const RX_SET_BIT_COUNTER_CLOCKS: u32 = 2;
+        const RX_BIT_LOOP_LAG_CLOCKS: u32 = 6;
+
+        const RX_SET_BIT_WAIT_LOOP_COUNTER_CLOCKS: u32 = 1;
+        const RX_SHIFT_CARRY_CLOCKS: u32 = 1;
+        const RX_DEC_BIT_COUNTER_CLOCKS: u32 = 1;
+        const RX_CHECK_BIT_CLOCKS: u32 = 3;
+        const RX_CHECK_BIT_COUNTER_CLOCKS: u32 = 3;
+
+        let rx_start_bit_wait_clocks = self.clocks_per_half_bit
+            - RX_CHECK_START_BIT_CLOCKS
+            - RX_FUNCTION_PRELUDE
+            - RX_SET_START_BIT_WAIT_LOOP_COUNTER_CLOCKS
+            - RX_VALIDATE_START_BIT_CLOCKS
+            - RX_SET_BIT_COUNTER_CLOCKS
+            + WAIT_LOOP_MISSING_LOCKS
+            + RX_BIT_LOOP_LAG_CLOCKS;
+        let rx_start_bit_wait_cycles = rx_start_bit_wait_clocks / 4;
+        let rx_start_bit_tail_wait_cycles = rx_start_bit_wait_clocks % 4;
+        let rx_start_bit_tail_wait_instructions =
+            generate_space_optimal_nop_chain(rx_start_bit_tail_wait_cycles);
+
+        let rx_bit_wait_clocks = self.clocks_per_bit
+            - RX_SHIFT_CARRY_CLOCKS
+            - RX_SET_BIT_WAIT_LOOP_COUNTER_CLOCKS
+            - RX_DEC_BIT_COUNTER_CLOCKS
+            - RX_CHECK_BIT_CLOCKS
+            - RX_CHECK_BIT_COUNTER_CLOCKS
+            + WAIT_LOOP_MISSING_LOCKS;
+        let rx_bit_wait_cycles = rx_bit_wait_clocks / 4;
+        let rx_bit_tail_wait_cycles = rx_bit_wait_clocks % 4;
+        let rx_bit_tail_wait_instructions =
+            generate_space_optimal_nop_chain(rx_bit_tail_wait_cycles);
+
+        let rx_function_name = format!("uart{0}_receive", self.uart_num);
+        let rx_byte_name = format!("uart{0}_rx_byte", self.uart_num);
+
+
         let context = TemplateContext {
             app_name: env!("CARGO_PKG_NAME"),
             app_version: env!("CARGO_PKG_VERSION"),
@@ -292,7 +445,7 @@ impl UartGenerator {
             frequency: self.frequency.hz(),
             baud: self.baud,
 
-            tx_function_name: self.tx_function_name.clone(),
+            tx_function_name,
             tx_port: self.tx_port.char(),
             tx_pin: self.tx_pin.num(),
             tx_inverted: self.invert_tx,
@@ -302,6 +455,16 @@ impl UartGenerator {
             tx_bit_tail_wait_instructions,
             tx_stop_bit_wait_cycles,
             tx_stop_bit_tail_wait_instructions,
+
+            rx_function_name,
+            rx_byte_name,
+            rx_port: self.rx_port.char(),
+            rx_pin: self.rx_pin.num(),
+            rx_inverted: self.invert_rx,
+            rx_start_bit_wait_cycles,
+            rx_start_bit_tail_wait_instructions,
+            rx_bit_wait_cycles,
+            rx_bit_tail_wait_instructions,
         };
 
         let mut renderer = TinyTemplate::new();

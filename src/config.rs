@@ -32,8 +32,14 @@ pub struct UartSubcommand {
     pub tx_pin: Pin,
     #[clap(long, about = "Invert UART TX logic level")]
     pub invert_tx: bool,
-    #[clap(long, about = "Customize generated UART TX function name")]
-    pub tx_function_name: Option<String>,
+    #[clap(long, about = "Port to use for UART RX pin")]
+    pub rx_port: Port,
+    #[clap(long, about = "Pin to use for UART RX")]
+    pub rx_pin: Pin,
+    #[clap(long, about = "Invert UART RX logic level")]
+    pub invert_rx: bool,
+    #[clap(long, about = "Customize generated UART TX function name", default_value = "0")]
+    pub uart_num: u8,
     #[clap(long, about = "Set stop bits count; Available values: 1, 2, 1.5", default_value = "1")]
     pub stop_bits: StopBits,
 }
