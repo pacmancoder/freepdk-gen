@@ -16,10 +16,12 @@ fn main() -> Result<(), Error> {
     let config: AppConfig = AppConfig::parse();
 
     if matches!(config.subcommand, AppSubcommand::Uart(_)) {
-        UartGenerator::builder()
+        let generated_data = UartGenerator::builder()
             .load_config(&config)?
             .build()?
             .generate()?;
+
+        println!("Generated file:\n{0}", generated_data)
     }
 
     Ok(())
