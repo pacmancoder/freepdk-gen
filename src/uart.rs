@@ -73,6 +73,56 @@ impl UartGeneratorBuilder {
         Ok(self)
     }
 
+    pub fn frequency(mut self, frequency: Frequency) -> Self {
+        self.frequency.replace(frequency);
+        self
+    }
+
+    pub fn baud(mut self, baud: u32) -> Self {
+        self.baud.replace(baud);
+        self
+    }
+
+    pub fn tx_port(mut self, tx_port: Port) -> Self {
+        self.tx_port.replace(tx_port);
+        self
+    }
+
+    pub fn tx_pin(mut self, tx_pin: Pin) -> Self {
+        self.tx_pin.replace(tx_pin);
+        self
+    }
+
+    pub fn invert_tx(mut self) -> Self {
+        self.invert_tx = true;
+        self
+    }
+
+    pub fn rx_port(mut self, rx_port: Port) -> Self {
+        self.rx_port.replace(rx_port);
+        self
+    }
+
+    pub fn rx_pin(mut self, rx_pin: Pin) -> Self {
+        self.rx_pin.replace(rx_pin);
+        self
+    }
+
+    pub fn invert_rx(mut self) -> Self {
+        self.invert_rx = true;
+        self
+    }
+
+    pub fn uart_num(mut self, num: u8) -> Self {
+        self.uart_num.replace(num);
+        self
+    }
+
+    pub fn stop_bits(mut self, stop_bits: StopBits) -> Self {
+        self.stop_bits.replace(stop_bits);
+        self
+    }
+
     fn validate_all_params_specified(&self) -> Result<(), Error> {
         self.frequency.ok_or(Error::InvalidOptions)?;
         self.baud.ok_or(Error::InvalidOptions)?;
